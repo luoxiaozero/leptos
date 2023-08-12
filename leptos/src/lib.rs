@@ -199,6 +199,14 @@ pub use text_prop::TextProp;
 pub use tracing;
 #[cfg(debug_assertions)]
 mod tracing_property;
+pub use serde::Serialize;
+/// ser
+pub fn ser<T>(value: &T) -> Result<std::string::String, serde_json::Error>
+where
+    T: ?Sized + Serialize,
+{
+    serde_json::to_string(value)
+}
 pub use transition::*;
 extern crate self as leptos;
 
