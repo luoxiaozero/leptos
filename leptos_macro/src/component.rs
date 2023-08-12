@@ -199,7 +199,11 @@ impl ToTokens for Model {
                         quote! {}
                     } else {
                         quote! {
-                            ::leptos::leptos_dom::tracing::span!(::leptos::leptos_dom::tracing::Level::INFO, "props", props = ::leptos::tracing_property![#prop_names]);
+                            ::leptos::leptos_dom::tracing::span!(
+                                ::leptos::leptos_dom::tracing::Level::INFO,
+                                "leptos::leptos_dom::tracing_props",
+                                props = ::leptos::leptos_dom::tracing_props![#prop_names]
+                            );
                         }
                     }
                 )
