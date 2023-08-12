@@ -191,10 +191,14 @@ pub use suspense_component::*;
 mod suspense_component;
 mod text_prop;
 mod transition;
+#[cfg(debug_assertions)]
+pub use spez::spez;
 pub use text_prop::TextProp;
 #[cfg(any(debug_assertions, feature = "ssr"))]
 #[doc(hidden)]
 pub use tracing;
+#[cfg(debug_assertions)]
+mod tracing_property;
 pub use transition::*;
 extern crate self as leptos;
 

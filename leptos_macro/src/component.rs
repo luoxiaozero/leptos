@@ -178,7 +178,7 @@ impl ToTokens for Model {
 
         let component_fn_prop_docs = generate_component_fn_prop_docs(props);
 
-        let (tracing_instrument_attr, tracing_span_expr, tracing_guard_expr) =
+        let (tracing_instrument_attr, tracing_span_expr, tracing_guard_expr, tracing_props_expr) =
             if cfg!(feature = "tracing") {
                 (
                     quote! {
@@ -195,9 +195,16 @@ impl ToTokens for Model {
                         #[cfg(debug_assertions)]
                         let _guard = span.entered();
                     },
+                    if no_props {
+                        quote! {}
+                    } else {
+                        quote! {
+                            ::leptos::tracing_property![#prop_names];
+                        }
+                    }
                 )
             } else {
-                (quote! {}, quote! {}, quote! {})
+                (quote! {}, quote! {}, quote! {}, quote!{})
             };
 
         let component = if *is_transparent {
@@ -289,6 +296,8 @@ impl ToTokens for Model {
                 #body
 
                 #destructure_props
+
+                #tracing_props_expr
 
                 #tracing_span_expr
 
