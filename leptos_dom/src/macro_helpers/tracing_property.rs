@@ -1,42 +1,62 @@
 #[cfg_attr(debug_assertions, macro_export)]
 /// Use for tracing property
 macro_rules! tracing_props {
+    () => {
+        String::from("[]")
+    };
     ($($prop:tt),+ $(,)?) => {
         {
-            use leptos::leptos_dom::tracing_property::{Serialize, ser, spez};
+            use leptos::leptos_dom::tracing_property::{Match, SerializeMatch, DefalutMatch};
             let mut props = String::new();
             props.push('[');
             $(
-                let prop = spez! {
-                    for &$prop;
-                    match<T: Serialize> &T  -> String {
-                        ser(self.0.get().unwrap()).map_or_else(
-                            |err| format!(r#"{{"name": "{}", "error": {}}}"#, stringify!{$prop}, err),
-                            |prop| format!(r#"{{"name": "{}", "value": {}}}"#, stringify!{$prop}, prop),
-                        )
-                    }
-                    match<T> &T -> String {
-                        format!(r#"{{"name": "{}", "error": "The trait `serde::Serialize` is not implemented"}}"#, stringify!{$prop})
-                    }
-
-                };
+                let prop = (&&Match {
+                    name: stringify!{$prop},
+                    value: std::cell::Cell::new(Some(&$prop))
+                }).spez();
                 props.push_str(&format!("{},", prop));
             )*
-            if props.len() > 1 {
-                props.pop();
-            }
+            props.pop();
             props.push(']');
             props
         }
     };
 }
 
-pub use serde::Serialize;
-pub use spez::spez;
-/// ser
-pub fn ser<T>(value: &T) -> Result<std::string::String, serde_json::Error>
-where
-    T: ?Sized + Serialize,
-{
-    serde_json::to_string(value)
+// Implementation based on spez
+// see https://github.com/m-ou-se/spez
+
+pub struct Match<T> {
+    pub name: &'static str,
+    pub value: std::cell::Cell<Option<T>>,
+}
+
+pub trait SerializeMatch {
+    type Return;
+    fn spez(&self) -> Self::Return;
+}
+impl<T: serde::Serialize> SerializeMatch for &Match<&T> {
+    type Return = String;
+    fn spez(&self) -> Self::Return {
+        serde_json::to_string(self.value.get().unwrap()).map_or_else(
+            |err| format!(r#"{{"name": "{}", "error": {}}}"#, self.name, err),
+            |value| {
+                format!(r#"{{"name": "{}", "value": {}}}"#, self.name, value)
+            },
+        )
+    }
+}
+
+pub trait DefalutMatch {
+    type Return;
+    fn spez(&self) -> Self::Return;
+}
+impl<T> DefalutMatch for Match<&T> {
+    type Return = String;
+    fn spez(&self) -> Self::Return {
+        format!(
+            r#"{{"name": "{}", "error": "The trait `serde::Serialize` is not implemented"}}"#,
+            self.name
+        )
+    }
 }
