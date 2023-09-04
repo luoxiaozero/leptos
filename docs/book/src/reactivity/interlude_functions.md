@@ -6,7 +6,7 @@ application. It sometimes looks a little silly:
 
 ```rust
 // a signal holds a value, and can be updated
-let (count, set_count) = create_signal(cx, 0);
+let (count, set_count) = create_signal(0);
 
 // a derived signal is a function that accesses other signals
 let double_count = move || count() * 2;
@@ -19,11 +19,11 @@ let text = move || if count_is_odd() {
 
 // an effect automatically tracks the signals it depends on
 // and reruns when they change
-create_effect(cx, move |_| {
+create_effect(move |_| {
     log!("text = {}", text());
 });
 
-view! { cx,
+view! {
     <p>{move || text().to_uppercase()}</p>
 }
 ```
@@ -53,12 +53,12 @@ Take our typical `<SimpleCounter/>` example in its simplest form:
 
 ```rust
 #[component]
-pub fn SimpleCounter(cx: Scope) -> impl IntoView {
-    let (value, set_value) = create_signal(cx, 0);
+pub fn SimpleCounter() -> impl IntoView {
+    let (value, set_value) = create_signal(0);
 
     let increment = move |_| set_value.update(|value| *value += 1);
 
-    view! { cx,
+    view! {
         <button on:click=increment>
             {value}
         </button>
@@ -68,7 +68,7 @@ pub fn SimpleCounter(cx: Scope) -> impl IntoView {
 
 The `SimpleCounter` function itself runs once. The `value` signal is created once. The framework hands off the `increment` function to the browser as an event listener. When you click the button, the browser calls `increment`, which updates `value` via `set_value`. And that updates the single text node represented in our view by `{value}`.
 
-Closures are key to reactivity. They provide the framework with the ability to rerun the smallest possible unit of your application in responsive to a change.
+Closures are key to reactivity. They provide the framework with the ability to rerun the smallest possible unit of your application in response to a change.
 
 So remember two things:
 

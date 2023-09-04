@@ -1,4 +1,4 @@
-use crate::{use_navigate, use_resolved_path, ToHref, Url};
+use crate::{use_navigate, use_resolved_path, NavigateOptions, ToHref, Url};
 use leptos::{html::form, *};
 use serde::{de::DeserializeOwned, Serialize};
 use std::{error::Error, rc::Rc};
@@ -18,7 +18,6 @@ type OnError = Rc<dyn Fn(&gloo_net::Error)>;
 )]
 #[component]
 pub fn Form<A>(
-    cx: Scope,
     /// [`method`](https://developer.mozilla.org/en-US/docs/Web/HTML/Element/form#attr-method)
     /// is the HTTP method to submit the form with (`get` or `post`).
     #[prop(optional)]
@@ -54,6 +53,9 @@ pub fn Form<A>(
     /// A [`NodeRef`] in which the `<form>` element should be stored.
     #[prop(optional)]
     node_ref: Option<NodeRef<html::Form>>,
+    /// Sets whether the page should be scrolled to the top when the form is submitted.
+    #[prop(optional)]
+    noscroll: bool,
     /// Arbitrary attributes to add to the `<form>`
     #[prop(optional, into)]
     attributes: Option<MaybeSignal<AdditionalAttributes>>,
@@ -64,7 +66,6 @@ where
     A: ToHref + 'static,
 {
     fn inner(
-        cx: Scope,
         method: Option<&'static str>,
         action: Memo<Option<String>>,
         enctype: Option<String>,
@@ -76,6 +77,7 @@ where
         class: Option<Attribute>,
         children: Children,
         node_ref: Option<NodeRef<html::Form>>,
+        noscroll: bool,
         attributes: Option<MaybeSignal<AdditionalAttributes>>,
     ) -> HtmlElement<html::Form> {
         let action_version = version;
@@ -84,7 +86,11 @@ where
                 if ev.default_prevented() {
                     return;
                 }
-                let navigate = use_navigate(cx);
+                let navigate = use_navigate();
+                let navigate_options = NavigateOptions {
+                    scroll: !noscroll,
+                    ..Default::default()
+                };
 
                 let (form, method, action, enctype) =
                     extract_form_attributes(&ev);
@@ -99,7 +105,7 @@ where
                         &form_data,
                     )
                     .unwrap_throw();
-                let action = use_resolved_path(cx, move || action.clone())
+                let action = use_resolved_path(move || action.clone())
                     .get_untracked()
                     .unwrap_or_default();
                 // multipart POST (setting Context-Type breaks the request)
@@ -143,10 +149,7 @@ where
                                     match Url::try_from(resp_url.as_str()) {
                                         Ok(url) => {
                                             if url.origin
-                                                != window()
-                                                    .location()
-                                                    .origin()
-                                                    .unwrap_or_default()
+                                                != current_window_origin()
                                             {
                                                 _ = window()
                                                     .location()
@@ -154,28 +157,20 @@ where
                                                         resp_url.as_str(),
                                                     );
                                             } else {
-                                                request_animation_frame(
-                                                    move || {
-                                                        if let Err(e) = navigate(
-                                                            &format!(
-                                                                "{}{}{}",
-                                                                url.pathname,
-                                                                if url
-                                                                    .search
-                                                                    .is_empty()
-                                                                {
-                                                                    ""
-                                                                } else {
-                                                                    "?"
-                                                                },
-                                                                url.search,
-                                                            ),
-                                                            Default::default(),
-                                                        ) {
-                                                            warn!("{}", e);
-                                                        }
-                                                    },
-                                                );
+                                                navigate(
+                                                    &format!(
+                                                        "{}{}{}",
+                                                        url.pathname,
+                                                        if url.search.is_empty()
+                                                        {
+                                                            ""
+                                                        } else {
+                                                            "?"
+                                                        },
+                                                        url.search,
+                                                    ),
+                                                    navigate_options,
+                                                )
                                             }
                                         }
                                         Err(e) => warn!("{}", e),
@@ -227,10 +222,7 @@ where
                                     match Url::try_from(resp_url.as_str()) {
                                         Ok(url) => {
                                             if url.origin
-                                                != window()
-                                                    .location()
-                                                    .hostname()
-                                                    .unwrap_or_default()
+                                                != current_window_origin()
                                             {
                                                 _ = window()
                                                     .location()
@@ -238,28 +230,20 @@ where
                                                         resp_url.as_str(),
                                                     );
                                             } else {
-                                                request_animation_frame(
-                                                    move || {
-                                                        if let Err(e) = navigate(
-                                                            &format!(
-                                                                "{}{}{}",
-                                                                url.pathname,
-                                                                if url
-                                                                    .search
-                                                                    .is_empty()
-                                                                {
-                                                                    ""
-                                                                } else {
-                                                                    "?"
-                                                                },
-                                                                url.search,
-                                                            ),
-                                                            Default::default(),
-                                                        ) {
-                                                            warn!("{}", e);
-                                                        }
-                                                    },
-                                                );
+                                                navigate(
+                                                    &format!(
+                                                        "{}{}{}",
+                                                        url.pathname,
+                                                        if url.search.is_empty()
+                                                        {
+                                                            ""
+                                                        } else {
+                                                            "?"
+                                                        },
+                                                        url.search,
+                                                    ),
+                                                    navigate_options,
+                                                )
                                             }
                                         }
                                         Err(e) => warn!("{}", e),
@@ -273,28 +257,22 @@ where
                 else {
                     let params =
                         params.to_string().as_string().unwrap_or_default();
-                    if navigate(
-                        &format!("{action}?{params}"),
-                        Default::default(),
-                    )
-                    .is_ok()
-                    {
-                        ev.prevent_default();
-                        ev.stop_propagation();
-                    }
+                    navigate(&format!("{action}?{params}"), navigate_options);
+                    ev.prevent_default();
+                    ev.stop_propagation();
                 }
             }
         };
 
         let method = method.unwrap_or("get");
 
-        let mut form = form(cx)
+        let mut form = form()
             .attr("method", method)
             .attr("action", move || action.get())
             .attr("enctype", enctype)
             .on(ev::submit, on_submit)
             .attr("class", class)
-            .child(children(cx));
+            .child(children());
         if let Some(node_ref) = node_ref {
             form = form.node_ref(node_ref)
         };
@@ -309,10 +287,9 @@ where
         form
     }
 
-    let action = use_resolved_path(cx, move || action.to_href()());
-    let class = class.map(|bx| bx.into_attribute_boxed(cx));
+    let action = use_resolved_path(move || action.to_href()());
+    let class = class.map(|bx| bx.into_attribute_boxed());
     inner(
-        cx,
         method,
         action,
         enctype,
@@ -324,7 +301,22 @@ where
         class,
         children,
         node_ref,
+        noscroll,
         attributes,
+    )
+}
+
+fn current_window_origin() -> String {
+    let location = window().location();
+    let protocol = location.protocol().unwrap_or_default();
+    let hostname = location.hostname().unwrap_or_default();
+    let port = location.port().unwrap_or_default();
+    format!(
+        "{}//{}{}{}",
+        protocol,
+        hostname,
+        if port.is_empty() { "" } else { ":" },
+        port
     )
 }
 
@@ -334,8 +326,7 @@ where
 ///
 /// ## Encoding
 /// **Note:** `<ActionForm/>` only works with server functions that use the
-/// default `Url` encoding or the `GetJSON` encoding, not with `CBOR` or other
-/// encoding schemes. This is to ensure that `<ActionForm/>` works correctly
+/// default `Url` encoding. This is to ensure that `<ActionForm/>` works correctly
 /// both before and after WASM has loaded.
 #[cfg_attr(
     any(debug_assertions, feature = "ssr"),
@@ -343,7 +334,6 @@ where
 )]
 #[component]
 pub fn ActionForm<I, O>(
-    cx: Scope,
     /// The action from which to build the form. This should include a URL, which can be generated
     /// by default using [create_server_action](leptos_server::create_server_action) or added
     /// manually using [leptos_server::Action::using_server_fn].
@@ -357,6 +347,9 @@ pub fn ActionForm<I, O>(
     /// A [`NodeRef`] in which the `<form>` element should be stored.
     #[prop(optional)]
     node_ref: Option<NodeRef<html::Form>>,
+    /// Sets whether the page should be scrolled to the top when navigating.
+    #[prop(optional)]
+    noscroll: bool,
     /// Arbitrary attributes to add to the `<form>`
     #[prop(optional, into)]
     attributes: Option<MaybeSignal<AdditionalAttributes>>,
@@ -381,7 +374,7 @@ where
     let input = action.input();
 
     let on_error = Rc::new(move |e: &gloo_net::Error| {
-        cx.batch(move || {
+        batch(move || {
             action.set_pending(false);
             let e = ServerFnError::Request(e.to_string());
             value.try_set(Some(Err(e.clone())));
@@ -395,7 +388,7 @@ where
         let data = I::from_form_data(form_data);
         match data {
             Ok(data) => {
-                cx.batch(move || {
+                batch(move || {
                     input.try_set(Some(data));
                     action.set_pending(true);
                 });
@@ -403,7 +396,7 @@ where
             Err(e) => {
                 error!("{e}");
                 let e = ServerFnError::Serialization(e.to_string());
-                cx.batch(move || {
+                batch(move || {
                     value.try_set(Some(Err(e.clone())));
                     if let Some(error) = error {
                         error
@@ -416,78 +409,95 @@ where
 
     let on_response = Rc::new(move |resp: &web_sys::Response| {
         let resp = resp.clone().expect("couldn't get Response");
+
+        // If the response was redirected then a JSON will not be available in the response, instead
+        // it will be an actual page, so we don't want to try to parse it.
+        if resp.redirected() {
+            return;
+        }
+
         spawn_local(async move {
-            let redirected = resp.redirected();
-            if !redirected {
-                let body = JsFuture::from(
-                    resp.text().expect("couldn't get .text() from Response"),
-                )
-                .await;
-                let status = resp.status();
-                match body {
-                    Ok(json) => {
-                        let json = json
-                            .as_string()
-                            .expect("couldn't get String from JsString");
-                        if (500..=599).contains(&status) {
-                            match serde_json::from_str::<ServerFnError>(&json) {
-                                Ok(res) => {
-                                    value.try_set(Some(Err(res)));
-                                    if let Some(error) = error {
-                                        error.try_set(None);
-                                    }
-                                }
-                                Err(e) => {
-                                    value.try_set(Some(Err(
-                                        ServerFnError::Deserialization(
-                                            e.to_string(),
-                                        ),
-                                    )));
-                                    if let Some(error) = error {
-                                        error.try_set(Some(Box::new(e)));
-                                    }
+            let body = JsFuture::from(
+                resp.text().expect("couldn't get .text() from Response"),
+            )
+            .await;
+            let status = resp.status();
+            match body {
+                Ok(json) => {
+                    let json = json
+                        .as_string()
+                        .expect("couldn't get String from JsString");
+                    if (500..=599).contains(&status) {
+                        match serde_json::from_str::<ServerFnError>(&json) {
+                            Ok(res) => {
+                                value.try_set(Some(Err(res)));
+                                if let Some(error) = error {
+                                    error.try_set(None);
                                 }
                             }
-                        } else {
-                            match serde_json::from_str::<O>(&json) {
-                                Ok(res) => {
-                                    value.try_set(Some(Ok(res)));
-                                    if let Some(error) = error {
-                                        error.try_set(None);
-                                    }
+                            Err(e) => {
+                                value.try_set(Some(Err(
+                                    ServerFnError::Deserialization(
+                                        e.to_string(),
+                                    ),
+                                )));
+                                if let Some(error) = error {
+                                    error.try_set(Some(Box::new(e)));
                                 }
-                                Err(e) => {
-                                    value.try_set(Some(Err(
-                                        ServerFnError::Deserialization(
-                                            e.to_string(),
-                                        ),
-                                    )));
-                                    if let Some(error) = error {
-                                        error.try_set(Some(Box::new(e)));
-                                    }
+                            }
+                        }
+                    } else {
+                        match serde_json::from_str::<O>(&json) {
+                            Ok(res) => {
+                                value.try_set(Some(Ok(res)));
+                                if let Some(error) = error {
+                                    error.try_set(None);
+                                }
+                            }
+                            Err(e) => {
+                                value.try_set(Some(Err(
+                                    ServerFnError::Deserialization(
+                                        e.to_string(),
+                                    ),
+                                )));
+                                if let Some(error) = error {
+                                    error.try_set(Some(Box::new(e)));
                                 }
                             }
                         }
                     }
-                    Err(e) => {
-                        error!("{e:?}");
-                        if let Some(error) = error {
-                            error.try_set(Some(Box::new(
-                                ServerFnErrorErr::Request(
-                                    e.as_string().unwrap_or_default(),
-                                ),
-                            )));
-                        }
+                }
+                Err(e) => {
+                    error!("{e:?}");
+                    if let Some(error) = error {
+                        error.try_set(Some(Box::new(
+                            ServerFnErrorErr::Request(
+                                e.as_string().unwrap_or_default(),
+                            ),
+                        )));
                     }
-                };
-            }
-            cx.batch(move || {
+                }
+            };
+            batch(move || {
                 input.try_set(None);
                 action.set_pending(false);
             });
         });
     });
-    let class = class.map(|bx| bx.into_attribute_boxed(cx));
+    let class = class.map(|bx| bx.into_attribute_boxed());
+
+    #[cfg(debug_assertions)]
+    {
+        if I::encoding() != server_fn::Encoding::Url {
+            leptos::warn!(
+                "<ActionForm/> only supports the `Url` encoding for server \
+                 functions, but {} uses {:?}.",
+                std::any::type_name::<I>(),
+                I::encoding()
+            );
+        }
+    }
+
     let mut props = FormProps::builder()
         .action(action_url)
         .version(version)
@@ -496,12 +506,13 @@ where
         .on_error(on_error)
         .method("post")
         .class(class)
+        .noscroll(noscroll)
         .children(children)
         .build();
     props.error = error;
     props.node_ref = node_ref;
     props.attributes = attributes;
-    Form(cx, props)
+    Form(props)
 }
 
 /// Automatically turns a server [MultiAction](leptos_server::MultiAction) into an HTML
@@ -513,7 +524,6 @@ where
 )]
 #[component]
 pub fn MultiActionForm<I, O>(
-    cx: Scope,
     /// The action from which to build the form. This should include a URL, which can be generated
     /// by default using [create_server_action](leptos_server::create_server_action) or added
     /// manually using [leptos_server::Action::using_server_fn].
@@ -571,13 +581,13 @@ where
         }
     };
 
-    let class = class.map(|bx| bx.into_attribute_boxed(cx));
-    let mut form = form(cx)
+    let class = class.map(|bx| bx.into_attribute_boxed());
+    let mut form = form()
         .attr("method", "POST")
         .attr("action", action)
         .on(ev::submit, on_submit)
         .attr("class", class)
-        .child(children(cx));
+        .child(children());
     if let Some(node_ref) = node_ref {
         form = form.node_ref(node_ref)
     };

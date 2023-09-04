@@ -18,7 +18,6 @@ pub struct Model {
     docs: Docs,
     vis: Visibility,
     name: Ident,
-    scope_name: PatIdent,
     props: Vec<Prop>,
     body: ItemFn,
     ret: ReturnType,
@@ -37,22 +36,6 @@ impl Parse for Model {
             .into_iter()
             .map(Prop::new)
             .collect::<Vec<_>>();
-
-        let scope_name = if props.is_empty() {
-            abort!(
-                item.sig,
-                "this method requires a `Scope` parameter";
-                help = "try `fn {}(cx: Scope, /* ... */)`", item.sig.ident
-            );
-        } else if !is_valid_scope_type(&props[0].ty) {
-            abort!(
-                item.sig.inputs,
-                "this method requires a `Scope` parameter";
-                help = "try `fn {}(cx: Scope, /* ... */ */)`", item.sig.ident
-            );
-        } else {
-            props[0].name.clone()
-        };
 
         // We need to remove the `#[doc = ""]` and `#[builder(_)]`
         // attrs from the function signature
@@ -85,7 +68,6 @@ impl Parse for Model {
             docs,
             vis: item.vis.clone(),
             name: convert_from_snake_case(&item.sig.ident),
-            scope_name,
             props,
             ret: item.sig.output.clone(),
             body: item,
@@ -125,13 +107,12 @@ impl ToTokens for Model {
             docs,
             vis,
             name,
-            scope_name,
             props,
             body,
             ret,
         } = self;
 
-        let no_props = props.len() == 1;
+        let no_props = props.is_empty();
 
         let mut body = body.to_owned();
 
@@ -178,40 +159,53 @@ impl ToTokens for Model {
 
         let component_fn_prop_docs = generate_component_fn_prop_docs(props);
 
-        let (tracing_instrument_attr, tracing_span_expr, tracing_guard_expr) =
-            if cfg!(feature = "tracing") {
-                (
+        let (
+            tracing_instrument_attr,
+            tracing_span_expr,
+            tracing_guard_expr,
+            tracing_props_expr,
+        ) = if cfg!(feature = "tracing") {
+            (
+                quote! {
+                    #[allow(clippy::let_with_type_underscore)]
+                    #[cfg_attr(
+                        any(debug_assertions, feature="ssr"),
+                        ::leptos::leptos_dom::tracing::instrument(level = "info", name = #trace_name, skip_all)
+                    )]
+                },
+                quote! {
+                    let span = ::leptos::leptos_dom::tracing::Span::current();
+                },
+                quote! {
+                    #[cfg(debug_assertions)]
+                    let _guard = span.entered();
+                },
+                if no_props {
+                    quote! {}
+                } else {
                     quote! {
-                        #[allow(clippy::let_with_type_underscore)]
-                        #[cfg_attr(
-                            any(debug_assertions, feature="ssr"),
-                            ::leptos::leptos_dom::tracing::instrument(level = "info", name = #trace_name, skip_all)
-                        )]
-                    },
-                    quote! {
-                        let span = ::leptos::leptos_dom::tracing::Span::current();
-                    },
-                    quote! {
-                        #[cfg(debug_assertions)]
-                        let _guard = span.entered();
-                    },
-                )
-            } else {
-                (quote! {}, quote! {}, quote! {})
-            };
+                        ::leptos::leptos_dom::tracing_props![#prop_names];
+                    }
+                },
+            )
+        } else {
+            (quote! {}, quote! {}, quote! {}, quote! {})
+        };
 
         let component = if *is_transparent {
             quote! {
-                #body_name(#scope_name, #prop_names)
+                #body_name(#prop_names)
             }
         } else {
             quote! {
                 ::leptos::leptos_dom::Component::new(
                     stringify!(#name),
-                    move |cx| {
+                    move || {
                         #tracing_guard_expr
 
-                        #body_name(cx, #prop_names)
+                        #tracing_props_expr
+
+                        #body_name(#prop_names)
                     }
                 )
             }
@@ -238,16 +232,16 @@ impl ToTokens for Model {
         let into_view = if no_props {
             quote! {
                 impl #impl_generics ::leptos::IntoView for #props_name #generics #where_clause {
-                    fn into_view(self, cx: ::leptos::Scope) -> ::leptos::View {
-                        #name(cx).into_view(cx)
+                    fn into_view(self) -> ::leptos::View {
+                        #name().into_view()
                     }
                 }
             }
         } else {
             quote! {
                 impl #impl_generics ::leptos::IntoView for #props_name #generics #where_clause {
-                    fn into_view(self, cx: ::leptos::Scope) -> ::leptos::View {
-                        #name(cx, self).into_view(cx)
+                    fn into_view(self) -> ::leptos::View {
+                        #name(self).into_view()
                     }
                 }
             }
@@ -258,8 +252,9 @@ impl ToTokens for Model {
             #[doc = ""]
             #docs
             #component_fn_prop_docs
-            #[derive(::leptos::typed_builder::TypedBuilder)]
-            #[builder(doc)]
+            #[derive(::leptos::typed_builder_macro::TypedBuilder)]
+            //#[builder(doc)]
+            #[builder(crate_module_path=::leptos::typed_builder)]
             #vis struct #props_name #impl_generics #where_clause {
                 #prop_builder_fields
             }
@@ -278,12 +273,13 @@ impl ToTokens for Model {
             #[allow(non_snake_case, clippy::too_many_arguments)]
             #tracing_instrument_attr
             #vis fn #name #impl_generics (
-                #[allow(unused_variables)]
-                #scope_name: ::leptos::Scope,
                 #props_arg
             ) #ret #(+ #lifetimes)*
             #where_clause
             {
+                #[allow(non_snake_case)]
+                // allowed for lifetimes that are needed for props struct
+                #[allow(clippy::needless_lifetimes)]
                 #body
 
                 #destructure_props
@@ -373,11 +369,11 @@ impl Docs {
         let mut quotes = "```".to_string();
         let mut quote_ws = "".to_string();
         let mut view_code_fence_state = ViewCodeFenceState::Outside;
-        const RUST_START: &str =
-            "# ::leptos::create_scope(::leptos::create_runtime(), |cx| {";
-        const RUST_END: &str = "# }).dispose();";
-        const RSX_START: &str = "# ::leptos::view! {cx,";
-        const RSX_END: &str = "# };}).dispose();";
+        // todo fix docs stuff
+        const RUST_START: &str = "# let runtime = ::leptos::create_runtime();";
+        const RUST_END: &str = "# runtime.dispose();";
+        const RSX_START: &str = "# ::leptos::view! {";
+        const RSX_END: &str = "# };";
 
         // Seperated out of chain to allow rustfmt to work
         let map = |(doc, span): (String, Span)| {
@@ -559,7 +555,11 @@ impl ToTokens for TypedBuilderOpts {
             quote! {}
         };
 
-        let output = quote! { #[builder(#default #setter)] };
+        let output = if !default.is_empty() || !setter.is_empty() {
+            quote! { #[builder(#default #setter)] }
+        } else {
+            quote! {}
+        };
 
         tokens.append_all(output);
     }
@@ -568,7 +568,6 @@ impl ToTokens for TypedBuilderOpts {
 fn prop_builder_fields(vis: &Visibility, props: &[Prop]) -> TokenStream {
     props
         .iter()
-        .filter(|Prop { ty, .. }| !is_valid_scope_type(ty))
         .map(|prop| {
             let Prop {
                 docs,
@@ -589,12 +588,14 @@ fn prop_builder_fields(vis: &Visibility, props: &[Prop]) -> TokenStream {
                 quote!()
             };
 
+            let PatIdent { ident, by_ref, .. } = &name;
+
             quote! {
                 #docs
                 #builder_docs
                 #builder_attrs
                 #allow_missing_docs
-                #vis #name: #ty,
+                #vis #by_ref #ident: #ty,
             }
         })
         .collect()
@@ -603,8 +604,12 @@ fn prop_builder_fields(vis: &Visibility, props: &[Prop]) -> TokenStream {
 fn prop_names(props: &[Prop]) -> TokenStream {
     props
         .iter()
-        .filter(|Prop { ty, .. }| !is_valid_scope_type(ty))
-        .map(|Prop { name, .. }| quote! { #name, })
+        .map(|Prop { name, .. }| {
+            // fields like mutability are removed because unneeded
+            // in the contexts in which this is used
+            let ident = &name.ident;
+            quote! { #ident, }
+        })
         .collect()
 }
 
@@ -780,16 +785,6 @@ fn prop_to_doc(
             }
         }
     }
-}
-
-fn is_valid_scope_type(ty: &Type) -> bool {
-    [
-        parse_quote!(Scope),
-        parse_quote!(leptos::Scope),
-        parse_quote!(::leptos::Scope),
-    ]
-    .iter()
-    .any(|test| ty == test)
 }
 
 fn is_valid_into_view_return_type(ty: &ReturnType) -> bool {

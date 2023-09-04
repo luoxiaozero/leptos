@@ -5,32 +5,35 @@ CARGO_MAKE_EXTEND_WORKSPACE_MAKEFILE = true
 CARGO_MAKE_CARGO_BUILD_TEST_FLAGS = ""
 CARGO_MAKE_WORKSPACE_EMULATION = true
 CARGO_MAKE_CRATE_WORKSPACE_MEMBERS = [
-    "counter",
-    "counter_isomorphic",
-    "counters",
-    "counters_stable",
-    "counter_without_macros",
-    "error_boundary",
-    "errors_axum",
-    "fetch",
-    "hackernews",
-    "hackernews_axum",
-    "js-framework-benchmark",
-    "leptos-tailwind-axum",
-    "login_with_token_csr_only",
-    "parent_child",
-    "router",
-    "session_auth_axum",
-    "slots",
-    "ssr_modes",
-    "ssr_modes_axum",
-    "tailwind",
-    "tailwind_csr_trunk",
-    "timer",
-    "todo_app_sqlite",
-    "todo_app_sqlite_axum",
-    "todo_app_sqlite_viz",
-    "todomvc",
+  "animated_show",
+  "counter",
+  "counter_isomorphic",
+  "counters",
+  "counters_stable",
+  "counter_url_query",
+  "counter_without_macros",
+  "error_boundary",
+  "errors_axum",
+  "fetch",
+  "hackernews",
+  "hackernews_axum",
+  "js-framework-benchmark",
+  "leptos-tailwind-axum",
+  "login_with_token_csr_only",
+  "parent_child",
+  "router",
+  "session_auth_axum",
+  "slots",
+  "ssr_modes",
+  "ssr_modes_axum",
+  "suspense_tests",
+  "tailwind",
+  "tailwind_csr_trunk",
+  "timer",
+  "todo_app_sqlite",
+  "todo_app_sqlite_axum",
+  "todo_app_sqlite_viz",
+  "todomvc",
 ]
 
 [tasks.gen-members]
@@ -45,3 +48,104 @@ grep -v gtk |
 jq -R -s -c 'split("\n")[:-1]')
 echo "CARGO_MAKE_CRATE_WORKSPACE_MEMBERS = $examples"
 '''
+
+[tasks.test-runner-report]
+workspace = false
+description = "report ci test runners and tools for each example - OPTION: [all]"
+script = '''
+set -emu
+
+BOLD="\e[1m"
+GREEN="\e[0;32m"
+ITALIC="\e[3m"
+YELLOW="\e[0;33m"
+RESET="\e[0m"
+
+echo
+echo "${YELLOW}Test Runner & Tool Report${RESET}"
+echo "${ITALIC}Pass the option \"all\" to show all the examples${RESET}"
+echo
+
+makefile_paths=$(find . -name Makefile.toml -not -path '*/target/*' |
+  sed 's%./%%' |
+  sed 's%/Makefile.toml%%' |
+  grep -v Makefile.toml |
+  sort -u)
+
+start_path=$(pwd)
+
+for path in $makefile_paths; do
+  cd $path
+
+  crate_symbols=
+
+  test_count=$(grep -rl -E "#\[test\]" | wc -l)
+  if [ $test_count -gt 0 ]; then
+      crate_symbols="T"
+  fi
+
+  while read -r line; do
+      case $line in
+      *"cucumber"*)
+          crate_symbols=$crate_symbols"C"
+          ;;
+      *"fantoccini"*)
+          crate_symbols=$crate_symbols"F"
+          ;;
+      *"rstest"*)
+          crate_symbols=$crate_symbols"R"
+          ;;
+      esac
+  done <"./Cargo.toml"
+
+  while read -r line; do
+    case $line in
+      *"wasm-test.toml"*)
+          crate_symbols=$crate_symbols"W"
+        ;;
+      *"playwright-test.toml"*)
+          crate_symbols=$crate_symbols"P"
+        ;;
+      *"cargo-leptos-test.toml"*)
+          crate_symbols=$crate_symbols"L"
+        ;;
+    esac
+  done <"./Makefile.toml"
+
+  # Sort list of tools
+  sorted_crate_symbols=$(echo ${crate_symbols} | grep -o . | sort | tr -d "\n") 
+
+  formatted_crate_symbols=" ➤ ${BOLD}${YELLOW}${sorted_crate_symbols}${RESET}"
+  crate_line=$path
+  if [ ! -z ${1+x} ]; then
+    # Show all examples
+    if [ ! -z $crate_symbols ]; then
+      crate_line=$crate_line$formatted_crate_symbols
+    fi
+    echo $crate_line
+  elif [ ! -z $crate_symbols ]; then
+    # Filter out examples that do not run tests in `ci`
+    crate_line=$crate_line$formatted_crate_symbols
+    echo $crate_line
+  fi
+
+  cd ${start_path}
+done
+
+c="${BOLD}${YELLOW}C${RESET} = Cucumber"
+f="${BOLD}${YELLOW}F${RESET} = Fantoccini WebDriver"
+l="${BOLD}${YELLOW}L${RESET} = Cargo Leptos"
+p="${BOLD}${YELLOW}P${RESET} = Playwright"
+r="${BOLD}${YELLOW}R${RESET} = RS Test"
+t="${BOLD}${YELLOW}T${RESET} = Cargo"
+w="${BOLD}${YELLOW}W${RESET} = WASM"
+
+echo
+echo "${ITALIC}Key:${RESET} $c, $f, $l, $p, $r, $t, $w"
+echo
+'''
+
+# ALIASES
+
+[tasks.tr]
+alias = "test-runner-report"

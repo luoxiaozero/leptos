@@ -4,10 +4,9 @@
 use super::{html::HTML_ELEMENT_DEREF_UNIMPLEMENTED_MSG, HydrationKey};
 use super::{ElementDescriptor, HtmlElement};
 use crate::HydrationCtx;
-use leptos_reactive::Scope;
+use leptos_reactive::Oco;
 #[cfg(all(target_arch = "wasm32", feature = "web"))]
 use once_cell::unsync::Lazy as LazyCell;
-use std::borrow::Cow;
 #[cfg(all(target_arch = "wasm32", feature = "web"))]
 use wasm_bindgen::JsCast;
 
@@ -64,11 +63,9 @@ macro_rules! generate_svg_tags {
                 assert_eq!(
                   el.node_name().to_ascii_uppercase(),
                   stringify!([<$tag:upper $(_ $second:upper $(_ $third:upper)?)?>]),
-                  "SSR and CSR elements have the same `TopoId` \
-                    but different node kinds. This is either a \
-                    discrepancy between SSR and CSR rendering
-                    logic, which is considered a bug, or it \
-                    can also be a leptos hydration issue."
+                  "SSR and CSR elements have the same hydration key but \
+                  different node kinds. Check out the docs for information \
+                  about this kind of hydration bug: https://leptos-rs.github.io/leptos/ssr/24_hydration_bugs.html"
                 );
 
                 el.remove_attribute("id").unwrap();
@@ -81,11 +78,9 @@ macro_rules! generate_svg_tags {
                 assert_eq!(
                   el.node_name().to_ascii_uppercase(),
                   stringify!([<$tag:upper $(_ $second:upper $(_ $third:upper)?)?>]),
-                  "SSR and CSR elements have the same `TopoId` \
-                    but different node kinds. This is either a \
-                    discrepancy between SSR and CSR rendering
-                    logic, which is considered a bug, or it \
-                    can also be a leptos hydration issue."
+                  "SSR and CSR elements have the same hydration key but \
+                  different node kinds. Check out the docs for information \
+                  about this kind of hydration bug: https://leptos-rs.github.io/leptos/ssr/24_hydration_bugs.html"
                 );
 
                 el.remove_attribute("leptos-hk").unwrap();
@@ -147,7 +142,7 @@ macro_rules! generate_svg_tags {
         }
 
         impl ElementDescriptor for [<$tag:camel $($second:camel $($third:camel)?)?>] {
-          fn name(&self) -> Cow<'static, str> {
+          fn name(&self) -> Oco<'static, str> {
             stringify!($tag).into()
           }
 
@@ -161,8 +156,8 @@ macro_rules! generate_svg_tags {
 
         #[$meta]
         #[allow(non_snake_case)]
-        pub fn [<$tag $(_ $second $(_ $third)?)? $($trailing_)?>](cx: Scope) -> HtmlElement<[<$tag:camel $($second:camel $($third:camel)?)?>]> {
-          HtmlElement::new(cx, [<$tag:camel $($second:camel $($third:camel)?)?>]::default())
+        pub fn [<$tag $(_ $second $(_ $third)?)? $($trailing_)?>]() -> HtmlElement<[<$tag:camel $($second:camel $($third:camel)?)?>]> {
+          HtmlElement::new([<$tag:camel $($second:camel $($third:camel)?)?>]::default())
         }
       )*
     }

@@ -4,10 +4,10 @@ We just defined the following set of routes:
 
 ```rust
 <Routes>
-  <Route path="/" view=|cx| view! { cx, <Home /> }/>
-  <Route path="/users" view=|cx| view! { cx, <Users /> }/>
-  <Route path="/users/:id" view=|cx| view! { cx, <UserProfile /> }/>
-  <Route path="/*any" view=|cx| view! { cx, <NotFound /> }/>
+  <Route path="/" view=Home/>
+  <Route path="/users" view=Users/>
+  <Route path="/users/:id" view=UserProfile/>
+  <Route path="/*any" view=NotFound/>
 </Routes>
 ```
 
@@ -17,11 +17,11 @@ Well... you can!
 
 ```rust
 <Routes>
-  <Route path="/" view=|cx| view! { cx, <Home /> }/>
-  <Route path="/users" view=|cx| view! { cx, <Users /> }>
-    <Route path=":id" view=|cx| view! { cx, <UserProfile /> }/>
+  <Route path="/" view=Home/>
+  <Route path="/users" view=Users>
+    <Route path=":id" view=UserProfile/>
   </Route>
-  <Route path="/*any" view=|cx| view! { cx, <NotFound /> }/>
+  <Route path="/*any" view=NotFound/>
 </Routes>
 ```
 
@@ -39,8 +39,8 @@ Let’s look back at our practical example.
 
 ```rust
 <Routes>
-  <Route path="/users" view=|cx| view! { cx, <Users /> }/>
-  <Route path="/users/:id" view=|cx| view! { cx, <UserProfile /> }/>
+  <Route path="/users" view=Users/>
+  <Route path="/users/:id" view=UserProfile/>
 </Routes>
 ```
 
@@ -53,8 +53,8 @@ Let’s say I use nested routes instead:
 
 ```rust
 <Routes>
-  <Route path="/users" view=|cx| view! { cx, <Users /> }>
-    <Route path=":id" view=|cx| view! { cx, <UserProfile /> }/>
+  <Route path="/users" view=Users>
+    <Route path=":id" view=UserProfile/>
   </Route>
 </Routes>
 ```
@@ -68,9 +68,9 @@ I actually need to add a fallback route
 
 ```rust
 <Routes>
-  <Route path="/users" view=|cx| view! { cx, <Users /> }>
-    <Route path=":id" view=|cx| view! { cx, <UserProfile /> }/>
-    <Route path="" view=|cx| view! { cx, <NoUser /> }/>
+  <Route path="/users" view=Users>
+    <Route path=":id" view=UserProfile/>
+    <Route path="" view=NoUser/>
   </Route>
 </Routes>
 ```
@@ -94,9 +94,9 @@ You can easily define this with nested routes
 
 ```rust
 <Routes>
-  <Route path="/contacts" view=|cx| view! { cx, <ContactList/> }>
-    <Route path=":id" view=|cx| view! { cx, <ContactInfo/> }/>
-    <Route path="" view=|cx| view! { cx,
+  <Route path="/contacts" view=ContactList>
+    <Route path=":id" view=ContactInfo/>
+    <Route path="" view=|| view! {
       <p>"Select a contact to view more info."</p>
     }/>
   </Route>
@@ -107,13 +107,13 @@ You can go even deeper. Say you want to have tabs for each contact’s address, 
 
 ```rust
 <Routes>
-  <Route path="/contacts" view=|cx| view! { cx, <ContactList/> }>
-    <Route path=":id" view=|cx| view! { cx, <ContactInfo/> }>
-      <Route path="" view=|cx| view! { cx, <EmailAndPhone/> }/>
-      <Route path="address" view=|cx| view! { cx, <Address/> }/>
-      <Route path="messages" view=|cx| view! { cx, <Messages/> }/>
+  <Route path="/contacts" view=ContactList>
+    <Route path=":id" view=ContactInfo>
+      <Route path="" view=EmailAndPhone/>
+      <Route path="address" view=Address/>
+      <Route path="messages" view=Messages/>
     </Route>
-    <Route path="" view=|cx| view! { cx,
+    <Route path="" view=|| view! {
       <p>"Select a contact to view more info."</p>
     }/>
   </Route>
@@ -124,7 +124,7 @@ You can go even deeper. Say you want to have tabs for each contact’s address, 
 
 ## `<Outlet/>`
 
-Parent routes do not automatically render their nested routes. After all, they are just components; they don’t know exactly where they should render their children, and “just stick at at the end of the parent component” is not a great answer.
+Parent routes do not automatically render their nested routes. After all, they are just components; they don’t know exactly where they should render their children, and “just stick it at the end of the parent component” is not a great answer.
 
 Instead, you tell a parent component where to render any nested components with an `<Outlet/>` component. The `<Outlet/>` simply renders one of two things:
 
@@ -135,15 +135,15 @@ That’s all! But it’s important to know and to remember, because it’s a com
 
 ```rust
 #[component]
-pub fn ContactList(cx: Scope) -> impl IntoView {
+pub fn ContactList() -> impl IntoView {
   let contacts = todo!();
 
-  view! { cx,
+  view! {
     <div style="display: flex">
       // the contact list
       <For each=contacts
         key=|contact| contact.id
-        view=|cx, contact| todo!()
+        view=|contact| todo!()
       >
       // the nested child, if any
       // don’t forget this!
@@ -170,3 +170,119 @@ In fact, in this case, we don’t even need to rerender the `<Contact/>` compone
 [Click to open CodeSandbox.](https://codesandbox.io/p/sandbox/16-router-fy4tjv?file=%2Fsrc%2Fmain.rs&selection=%5B%7B%22endColumn%22%3A1%2C%22endLineNumber%22%3A3%2C%22startColumn%22%3A1%2C%22startLineNumber%22%3A3%7D%5D)
 
 <iframe src="https://codesandbox.io/p/sandbox/16-router-fy4tjv?file=%2Fsrc%2Fmain.rs&selection=%5B%7B%22endColumn%22%3A1%2C%22endLineNumber%22%3A3%2C%22startColumn%22%3A1%2C%22startLineNumber%22%3A3%7D%5D" width="100%" height="1000px" style="max-height: 100vh"></iframe>
+
+<details>
+<summary>CodeSandbox Source</summary>
+
+```rust
+use leptos::*;
+use leptos_router::*;
+
+#[component]
+fn App() -> impl IntoView {
+    view! {
+        <Router>
+            <h1>"Contact App"</h1>
+            // this <nav> will show on every routes,
+            // because it's outside the <Routes/>
+            // note: we can just use normal <a> tags
+            // and the router will use client-side navigation
+            <nav>
+                <h2>"Navigation"</h2>
+                <a href="/">"Home"</a>
+                <a href="/contacts">"Contacts"</a>
+            </nav>
+            <main>
+                <Routes>
+                    // / just has an un-nested "Home"
+                    <Route path="/" view=|| view! {
+                        <h3>"Home"</h3>
+                    }/>
+                    // /contacts has nested routes
+                    <Route
+                        path="/contacts"
+                        view=ContactList
+                      >
+                        // if no id specified, fall back
+                        <Route path=":id" view=ContactInfo>
+                            <Route path="" view=|| view! {
+                                <div class="tab">
+                                    "(Contact Info)"
+                                </div>
+                            }/>
+                            <Route path="conversations" view=|| view! {
+                                <div class="tab">
+                                    "(Conversations)"
+                                </div>
+                            }/>
+                        </Route>
+                        // if no id specified, fall back
+                        <Route path="" view=|| view! {
+                            <div class="select-user">
+                                "Select a user to view contact info."
+                            </div>
+                        }/>
+                    </Route>
+                </Routes>
+            </main>
+        </Router>
+    }
+}
+
+#[component]
+fn ContactList() -> impl IntoView {
+    view! {
+        <div class="contact-list">
+            // here's our contact list component itself
+            <div class="contact-list-contacts">
+                <h3>"Contacts"</h3>
+                <A href="alice">"Alice"</A>
+                <A href="bob">"Bob"</A>
+                <A href="steve">"Steve"</A>
+            </div>
+
+            // <Outlet/> will show the nested child route
+            // we can position this outlet wherever we want
+            // within the layout
+            <Outlet/>
+        </div>
+    }
+}
+
+#[component]
+fn ContactInfo() -> impl IntoView {
+    // we can access the :id param reactively with `use_params_map`
+    let params = use_params_map();
+    let id = move || params.with(|params| params.get("id").cloned().unwrap_or_default());
+
+    // imagine we're loading data from an API here
+    let name = move || match id().as_str() {
+        "alice" => "Alice",
+        "bob" => "Bob",
+        "steve" => "Steve",
+        _ => "User not found.",
+    };
+
+    view! {
+        <div class="contact-info">
+            <h4>{name}</h4>
+            <div class="tabs">
+                <A href="" exact=true>"Contact Info"</A>
+                <A href="conversations">"Conversations"</A>
+            </div>
+
+            // <Outlet/> here is the tabs that are nested
+            // underneath the /contacts/:id route
+            <Outlet/>
+        </div>
+    }
+}
+
+fn main() {
+    leptos::mount_to_body(|| view! { <App/> })
+}
+
+```
+
+</details>
+</preview>

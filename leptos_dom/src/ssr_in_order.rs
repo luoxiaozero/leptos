@@ -12,8 +12,7 @@ use cfg_if::cfg_if;
 use futures::{channel::mpsc::UnboundedSender, Stream, StreamExt};
 use itertools::Itertools;
 use leptos_reactive::{
-    create_runtime, run_scope_undisposed, suspense::StreamChunk, RuntimeId,
-    Scope, ScopeId,
+    create_runtime, suspense::StreamChunk, Oco, RuntimeId, SharedContext,
 };
 use std::{borrow::Cow, collections::VecDeque};
 
@@ -21,13 +20,20 @@ use std::{borrow::Cow, collections::VecDeque};
 /// loaded in `<Suspense/>` elements have finished loading.
 #[tracing::instrument(level = "info", skip_all)]
 pub async fn render_to_string_async(
-    view: impl FnOnce(Scope) -> View + 'static,
+    view: impl FnOnce() -> View + 'static,
 ) -> String {
     let mut buf = String::new();
-    let mut stream = Box::pin(render_to_stream_in_order(view));
+    let (stream, runtime) =
+        render_to_stream_in_order_with_prefix_undisposed_with_context(
+            view,
+            || "".into(),
+            || {},
+        );
+    let mut stream = Box::pin(stream);
     while let Some(chunk) = stream.next().await {
         buf.push_str(&chunk);
     }
+    runtime.dispose();
     buf
 }
 
@@ -37,9 +43,9 @@ pub async fn render_to_string_async(
 /// 2. any serialized [Resource](leptos_reactive::Resource)s
 #[tracing::instrument(level = "info", skip_all)]
 pub fn render_to_stream_in_order(
-    view: impl FnOnce(Scope) -> View + 'static,
+    view: impl FnOnce() -> View + 'static,
 ) -> impl Stream<Item = String> {
-    render_to_stream_in_order_with_prefix(view, |_| "".into())
+    render_to_stream_in_order_with_prefix(view, || "".into())
 }
 
 /// Renders an in-order HTML stream, pausing at `<Suspense/>` components. The stream contains,
@@ -52,23 +58,21 @@ pub fn render_to_stream_in_order(
 /// after the `view` is rendered, but before `<Suspense/>` nodes have resolved.
 #[tracing::instrument(level = "trace", skip_all)]
 pub fn render_to_stream_in_order_with_prefix(
-    view: impl FnOnce(Scope) -> View + 'static,
-    prefix: impl FnOnce(Scope) -> Cow<'static, str> + 'static,
+    view: impl FnOnce() -> View + 'static,
+    prefix: impl FnOnce() -> Oco<'static, str> + 'static,
 ) -> impl Stream<Item = String> {
     #[cfg(all(feature = "web", feature = "ssr"))]
     crate::console_error(
         "\n[DANGER] You have both `csr` and `ssr` or `hydrate` and `ssr` \
          enabled as features, which may cause issues like <Suspense/>` \
-         failing to work silently. `csr` is enabled by default on `leptos`, \
-         and can be disabled by adding `default-features = false` to your \
-         `leptos` dependency.\n",
+         failing to work silently.\n",
     );
 
-    let (stream, runtime, _) =
+    let (stream, runtime) =
         render_to_stream_in_order_with_prefix_undisposed_with_context(
             view,
             prefix,
-            |_| {},
+            || {},
         );
     runtime.dispose();
     stream
@@ -84,71 +88,70 @@ pub fn render_to_stream_in_order_with_prefix(
 /// after the `view` is rendered, but before `<Suspense/>` nodes have resolved.
 #[tracing::instrument(level = "trace", skip_all)]
 pub fn render_to_stream_in_order_with_prefix_undisposed_with_context(
-    view: impl FnOnce(Scope) -> View + 'static,
-    prefix: impl FnOnce(Scope) -> Cow<'static, str> + 'static,
-    additional_context: impl FnOnce(Scope) + 'static,
-) -> (impl Stream<Item = String>, RuntimeId, ScopeId) {
+    view: impl FnOnce() -> View + 'static,
+    prefix: impl FnOnce() -> Oco<'static, str> + 'static,
+    additional_context: impl FnOnce() + 'static,
+) -> (impl Stream<Item = String>, RuntimeId) {
     HydrationCtx::reset_id();
 
     // create the runtime
     let runtime = create_runtime();
 
-    let (
-        (blocking_fragments_ready, chunks, prefix, pending_resources),
-        scope_id,
-        _,
-    ) = run_scope_undisposed(runtime, |cx| {
-        // add additional context
-        additional_context(cx);
+    // add additional context
+    additional_context();
 
-        // render view and return chunks
-        let view = view(cx);
+    // render view and return chunks
+    let view = view();
 
-        (
-            cx.blocking_fragments_ready(),
-            view.into_stream_chunks(cx),
-            prefix,
-            serde_json::to_string(&cx.pending_resources()).unwrap(),
-        )
-    });
-    let cx = Scope {
-        runtime,
-        id: scope_id,
-    };
+    let blocking_fragments_ready = SharedContext::blocking_fragments_ready();
+    let chunks = view.into_stream_chunks();
+    let pending_resources =
+        serde_json::to_string(&SharedContext::pending_resources()).unwrap();
 
     let (tx, rx) = futures::channel::mpsc::unbounded();
     let (prefix_tx, prefix_rx) = futures::channel::oneshot::channel();
     leptos_reactive::spawn_local(async move {
         blocking_fragments_ready.await;
+
         let remaining_chunks = handle_blocking_chunks(tx.clone(), chunks).await;
-        let prefix = prefix(cx);
+
+        let prefix = prefix();
         prefix_tx.send(prefix).expect("to send prefix");
-        handle_chunks(cx, tx, remaining_chunks).await;
+        handle_chunks(tx, remaining_chunks).await;
     });
 
-    let stream = futures::stream::once(async move {
-        let prefix = prefix_rx.await.expect("to receive prefix");
-        format!(
-            r#"
+    let nonce = crate::nonce::use_nonce();
+    let nonce_str = nonce
+        .as_ref()
+        .map(|nonce| format!(" nonce=\"{nonce}\""))
+        .unwrap_or_default();
+
+    let stream = futures::stream::once({
+        let nonce_str = nonce_str.clone();
+        async move {
+            let prefix = prefix_rx.await.expect("to receive prefix");
+            format!(
+                r#"
         {prefix}
-        <script>
+        <script{nonce_str}>
             __LEPTOS_PENDING_RESOURCES = {pending_resources};
             __LEPTOS_RESOLVED_RESOURCES = new Map();
             __LEPTOS_RESOURCE_RESOLVERS = new Map();
         </script>
       "#
-        )
+            )
+        }
     })
     .chain(rx)
     .chain(
         futures::stream::once(async move {
-            let serializers = cx.serialization_resolvers();
-            render_serializers(serializers)
+            let serializers = SharedContext::serialization_resolvers();
+            render_serializers(nonce_str, serializers)
         })
         .flatten(),
     );
 
-    (stream, runtime, scope_id)
+    (stream, runtime)
 }
 
 #[tracing::instrument(level = "trace", skip_all)]
@@ -195,7 +198,6 @@ async fn handle_blocking_chunks(
 #[tracing::instrument(level = "trace", skip_all)]
 #[async_recursion(?Send)]
 async fn handle_chunks(
-    cx: Scope,
     tx: UnboundedSender<String>,
     chunks: VecDeque<StreamChunk>,
 ) {
@@ -209,8 +211,10 @@ async fn handle_chunks(
                     .expect("failed to send async HTML chunk");
 
                 // send the inner stream
+
                 let suspended = chunks.await;
-                handle_chunks(cx, tx.clone(), suspended).await;
+
+                handle_chunks(tx.clone(), suspended).await;
             }
         }
     }
@@ -222,33 +226,29 @@ async fn handle_chunks(
 impl View {
     /// Renders the view into a set of HTML chunks that can be streamed.
     #[tracing::instrument(level = "trace", skip_all)]
-    pub fn into_stream_chunks(self, cx: Scope) -> VecDeque<StreamChunk> {
+    pub fn into_stream_chunks(self) -> VecDeque<StreamChunk> {
         let mut chunks = VecDeque::new();
-        self.into_stream_chunks_helper(cx, &mut chunks, false);
+        self.into_stream_chunks_helper(&mut chunks, false);
         chunks
     }
     #[tracing::instrument(level = "trace", skip_all)]
     fn into_stream_chunks_helper(
         self,
-        cx: Scope,
         chunks: &mut VecDeque<StreamChunk>,
         dont_escape_text: bool,
     ) {
         match self {
             View::Suspense(id, view) => {
                 let id = id.to_string();
-                if let Some(data) = cx.take_pending_fragment(&id) {
+                if let Some(data) = SharedContext::take_pending_fragment(&id) {
                     chunks.push_back(StreamChunk::Async {
                         chunks: data.in_order,
                         should_block: data.should_block,
                     });
                 } else {
                     // if not registered, means it was already resolved
-                    View::CoreComponent(view).into_stream_chunks_helper(
-                        cx,
-                        chunks,
-                        dont_escape_text,
-                    );
+                    View::CoreComponent(view)
+                        .into_stream_chunks_helper(chunks, dont_escape_text);
                 }
             }
             View::Text(node) => {
@@ -260,12 +260,12 @@ impl View {
                     let name = crate::ssr::to_kebab_case(&node.name);
                     chunks.push_back(StreamChunk::Sync(format!(r#"<!--hk={}|leptos-{name}-start-->"#, HydrationCtx::to_string(&node.id, false)).into()));
                     for child in node.children {
-                        child.into_stream_chunks_helper(cx, chunks, dont_escape_text);
+                        child.into_stream_chunks_helper(chunks, dont_escape_text);
                     }
                     chunks.push_back(StreamChunk::Sync(format!(r#"<!--hk={}|leptos-{name}-end-->"#, HydrationCtx::to_string(&node.id, true)).into()));
                   } else {
                     for child in node.children {
-                        child.into_stream_chunks_helper(cx, chunks, dont_escape_text);
+                        child.into_stream_chunks_helper(chunks, dont_escape_text);
                     }
                     chunks.push_back(StreamChunk::Sync(format!(r#"<!--hk={}-->"#, HydrationCtx::to_string(&node.id, true)).into()))
                   }
@@ -287,13 +287,11 @@ impl View {
                             StringOrView::String(string) => {
                                 chunks.push_back(StreamChunk::Sync(string))
                             }
-                            StringOrView::View(view) => {
-                                view().into_stream_chunks_helper(
-                                    cx,
+                            StringOrView::View(view) => view()
+                                .into_stream_chunks_helper(
                                     chunks,
                                     is_script_or_style,
-                                );
-                            }
+                                ),
                         }
                     }
                 } else {
@@ -314,9 +312,9 @@ impl View {
                                 } else {
                                     Some(
                                         format!(
-                    " {name}=\"{}\"",
-                    html_escape::encode_double_quoted_attribute(&value)
-                  )
+                                            " {name}=\"{}\"",
+                                            html_escape::encode_double_quoted_attribute(&value)
+                                        )
                                         .into(),
                                     )
                                 }
@@ -345,14 +343,13 @@ impl View {
                             ElementChildren::Children(children) => {
                                 for child in children {
                                     child.into_stream_chunks_helper(
-                                        cx,
                                         chunks,
                                         is_script_or_style,
                                     );
                                 }
                             }
                             ElementChildren::InnerHtml(inner_html) => {
-                                chunks.push_back(StreamChunk::Sync(inner_html));
+                                chunks.push_back(StreamChunk::Sync(inner_html))
                             }
                             // handled above
                             ElementChildren::Chunks(_) => unreachable!(),
@@ -409,39 +406,54 @@ impl View {
                             Box::new(
                                 move |chunks: &mut VecDeque<StreamChunk>| {
                                     if let Some(child) = *child {
-                                        // On debug builds, `DynChild` has two marker nodes,
-                                        // so there is no way for the text to be merged with
-                                        // surrounding text when the browser parses the HTML,
-                                        // but in release, `DynChild` only has a trailing marker,
-                                        // and the browser automatically merges the dynamic text
-                                        // into one single node, so we need to artificially make the
-                                        // browser create the dynamic text as it's own text node
                                         if let View::Text(t) = child {
-                                            let content = if dont_escape_text {
+                                            // if we don't check if the string is empty,
+                                            // the HTML is an empty string; but an empty string
+                                            // is not a text node in HTML, so can't be updated
+                                            // in the future. so we put a one-space text node instead
+                                            let was_empty =
+                                                t.content.is_empty();
+                                            let content = if was_empty {
+                                                " ".into()
+                                            } else {
                                                 t.content
+                                            };
+                                            // escape content unless we're in a <script> or <style>
+                                            let content = if dont_escape_text {
+                                                content
                                             } else {
                                                 html_escape::encode_safe(
-                                                    &t.content,
+                                                    &content,
                                                 )
                                                 .to_string()
                                                 .into()
                                             };
+                                            // On debug builds, `DynChild` has two marker nodes,
+                                            // so there is no way for the text to be merged with
+                                            // surrounding text when the browser parses the HTML,
+                                            // but in release, `DynChild` only has a trailing marker,
+                                            // and the browser automatically merges the dynamic text
+                                            // into one single node, so we need to artificially make the
+                                            // browser create the dynamic text as it's own text node
                                             chunks.push_back(
                                                 if !cfg!(debug_assertions) {
                                                     StreamChunk::Sync(
                                                         format!(
                                                             "<!>{}",
-                                                            content
+                                                            html_escape::encode_safe(
+                                                                &content
+                                                            )
                                                         )
                                                         .into(),
                                                     )
                                                 } else {
-                                                    StreamChunk::Sync(content)
+                                                    StreamChunk::Sync(html_escape::encode_safe(
+                                                        &content
+                                                    ).to_string().into())
                                                 },
                                             );
                                         } else {
                                             child.into_stream_chunks_helper(
-                                                cx,
                                                 chunks,
                                                 dont_escape_text,
                                             );
@@ -462,53 +474,62 @@ impl View {
                                 move |chunks: &mut VecDeque<StreamChunk>| {
                                     for node in children.into_iter().flatten() {
                                         let id = node.id;
+                                        let is_el = matches!(
+                                            node.child,
+                                            View::Element(_)
+                                        );
 
                                         #[cfg(debug_assertions)]
                                         {
-                                            chunks.push_back(
-                                                StreamChunk::Sync(
-                                                    format!(
+                                            if !is_el {
+                                                chunks.push_back(
+                                                    StreamChunk::Sync(
+                                                        format!(
                         "<!--hk={}|leptos-each-item-start-->",
                         HydrationCtx::to_string(&id, false)
                       )
-                                                    .into(),
-                                                ),
-                                            );
+                                                        .into(),
+                                                    ),
+                                                );
+                                            }
                                             node.child
                                                 .into_stream_chunks_helper(
-                                                    cx,
                                                     chunks,
                                                     dont_escape_text,
                                                 );
-                                            chunks.push_back(
-                                                StreamChunk::Sync(
-                                                    format!(
+
+                                            if !is_el {
+                                                chunks.push_back(
+                                                    StreamChunk::Sync(
+                                                        format!(
                         "<!--hk={}|leptos-each-item-end-->",
                         HydrationCtx::to_string(&id, true)
                       )
-                                                    .into(),
-                                                ),
-                                            );
+                                                        .into(),
+                                                    ),
+                                                );
+                                            }
                                         }
                                         #[cfg(not(debug_assertions))]
                                         {
                                             node.child
                                                 .into_stream_chunks_helper(
-                                                    cx,
                                                     chunks,
                                                     dont_escape_text,
                                                 );
-                                            chunks.push_back(
-                                                StreamChunk::Sync(
-                                                    format!(
+                                            if !is_el {
+                                                chunks.push_back(
+                                                    StreamChunk::Sync(
+                                                        format!(
                                                         "<!--hk={}-->",
                                                         HydrationCtx::to_string(
                                                             &id, true
                                                         )
                                                     )
-                                                    .into(),
-                                                ),
-                                            );
+                                                        .into(),
+                                                    ),
+                                                );
+                                            }
                                         }
                                     }
                                 },

@@ -17,7 +17,6 @@ miniserde = { version = "0.1", optional = true }
 rkyv = { version = "0.7.39", features = [
   "validation",
   "uuid",
-  "copy",
   "strict",
 ], optional = true }
 bytecheck = { version = "0.7", features = [
@@ -41,7 +40,7 @@ web-sys = { version = "0.3", optional = true, features = [
   "Window",
 ] }
 cfg-if = "1"
-indexmap = "1"
+indexmap = "2"
 self_cell = "1.0.0"
 
 [dev-dependencies]
@@ -68,7 +67,7 @@ hydrate = [
   "dep:web-sys",
 ]
 ssr = ["dep:tokio"]
-nightly = []
+nightly = ["rkyv?/copy"]
 serde = []
 serde-lite = ["dep:serde-lite"]
 miniserde = ["dep:miniserde"]

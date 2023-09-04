@@ -1,5 +1,8 @@
-[tasks.test-e2e]
-dependencies = ["setup-node", "cargo-leptos-e2e"]
+extend = { path = "./cargo-leptos.toml" }
 
-[tasks.clean-all]
-dependencies = ["clean-cargo", "clean-node_modules", "clean-playwright"]
+[tasks.integration-test]
+dependencies = ["install-cargo-leptos", "cargo-leptos-e2e"]
+
+[tasks.cargo-leptos-e2e]
+command = "cargo"
+args = ["leptos", "end-to-end"]

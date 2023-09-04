@@ -2,7 +2,6 @@ use leptos::*;
 
 #[component]
 pub fn TestComponent(
-    _cx: Scope,
     /// Rust code
     /// ```
     /// assert_eq!("hello", stringify!(hello));
@@ -28,7 +27,7 @@ pub fn TestComponent(
     /// # use example::TestComponent;
     /// <TestComponent key="hello"/>
     #[prop(optional)]
-    another:usize,
+    another: usize,
     /// rust unclosed
     /// ```view
     /// use example::TestComponent;
@@ -38,3 +37,18 @@ pub fn TestComponent(
     _ = (key, another, and_another);
 }
 
+#[component]
+fn TestMutCallback<'a, F>(mut callback: F, value: &'a str) -> impl IntoView
+where
+    F: FnMut(u32) + 'static,
+{
+    let value = value.to_owned();
+    view! {
+        <button on:click=move |_| {
+            callback(5);
+        }>
+            {value}
+        </button>
+        <TestComponent key="test"/>
+    }
+}

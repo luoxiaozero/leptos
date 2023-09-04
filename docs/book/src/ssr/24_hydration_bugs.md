@@ -8,7 +8,7 @@ Put a log somewhere in your root component. (I usually call mine `<App/>`, but a
 
 ```rust
 #[component]
-pub fn App(cx: Scope) -> impl IntoView {
+pub fn App() -> impl IntoView {
 	leptos::log!("where do I run?");
 	// ... whatever
 }
@@ -57,15 +57,15 @@ One way to create a bug is by creating a mismatch between the HTML that’s sent
 
 ```rust
 #[component]
-pub fn App(cx: Scope) -> impl IntoView {
+pub fn App() -> impl IntoView {
     let data = if cfg!(target_arch = "wasm32") {
         vec![0, 1, 2]
     } else {
         vec![]
     };
     data.into_iter()
-        .map(|value| view! { cx, <span>{value}</span> })
-        .collect_view(cx)
+        .map(|value| view! { <span>{value}</span> })
+        .collect_view()
 }
 ```
 
@@ -74,11 +74,11 @@ In other words, if this is being compiled to WASM, it has three items; otherwise
 When I load the page in the browser, I see nothing. If I open the console I see a bunch of warnings:
 
 ```
-element with id 0-0-1 not found, ignoring it for hydration
-element with id 0-0-2 not found, ignoring it for hydration
-element with id 0-0-3 not found, ignoring it for hydration
-component with id _0-0-4c not found, ignoring it for hydration
-component with id _0-0-4o not found, ignoring it for hydration
+element with id 0-3 not found, ignoring it for hydration
+element with id 0-4 not found, ignoring it for hydration
+element with id 0-5 not found, ignoring it for hydration
+component with id _0-6c not found, ignoring it for hydration
+component with id _0-6o not found, ignoring it for hydration
 ```
 
 The WASM version of your app, running in the browser, expects to find three items; but the HTML has none.
@@ -86,6 +86,56 @@ The WASM version of your app, running in the browser, expects to find three item
 #### Solution
 
 It’s pretty rare that you do this intentionally, but it could happen from somehow running different logic on the server and in the browser. If you’re seeing warnings like this and you don’t think it’s your fault, it’s much more likely that it’s a bug with `<Suspense/>` or something. Feel free to go ahead and open an [issue](https://github.com/leptos-rs/leptos/issues) or [discussion](https://github.com/leptos-rs/leptos/discussions) on GitHub for help.
+
+### Mutating the DOM during rendering
+
+This is a slightly more common way to create a client/server mismatch: updating a signal _during rendering_ in a way that mutates the view.
+
+```rust
+#[component]
+pub fn App() -> impl IntoView {
+    let (loaded, set_loaded) = create_signal(false);
+
+    // create_effect only runs on the client
+    create_effect(move |_| {
+        // do something like reading from localStorage
+        set_loaded(true);
+    });
+
+    move || {
+        if loaded() {
+            view! { <p>"Hello, world!"</p> }.into_any()
+        } else {
+            view! { <div class="loading">"Loading..."</div> }.into_any()
+        }
+    }
+}
+```
+
+This one gives us the scary panic
+
+```
+panicked at 'assertion failed: `(left == right)`
+  left: `"DIV"`,
+ right: `"P"`: SSR and CSR elements have the same hydration key but different node kinds.
+```
+
+And a handy link to this page!
+
+The problem here is that `create_effect` runs **immediately** and **synchronously**, but only in the browser. As a result, on the server, `loaded` is false, and a `<div>` is rendered. But on the browser, by the time the view is being rendered, `loaded` has already been set to `true`, and the browser is expecting to find a `<p>`.
+
+#### Solution
+
+You can simply tell the effect to wait a tick before updating the signal, by using something like `request_animation_frame`, which will set a short timeout and then update the signal before the next frame.
+
+```rust
+create_effect(move |_| {
+    // do something like reading from localStorage
+    request_animation_frame(move || set_loaded(true));
+});
+```
+
+This allows the browser to hydrate with the correct, matching state (`loaded` is `false` when it reaches the view), then immediately update it to `true` once hydration is complete.
 
 ### Not all client code can run on the server
 
@@ -113,7 +163,7 @@ For example, say that I want to store something in the browser’s `localStorage
 
 ```rust
 #[component]
-pub fn App(cx: Scope) -> impl IntoView {
+pub fn App() -> impl IntoView {
     use gloo_storage::Storage;
 	let storage = gloo_storage::LocalStorage::raw();
 	leptos::log!("{storage:?}");
@@ -126,9 +176,9 @@ But if I wrap it in an effect...
 
 ```rust
 #[component]
-pub fn App(cx: Scope) -> impl IntoView {
+pub fn App() -> impl IntoView {
     use gloo_storage::Storage;
-    create_effect(cx, move |_| {
+    create_effect(move |_| {
         let storage = gloo_storage::LocalStorage::raw();
 		leptos::log!("{storage:?}");
     });
